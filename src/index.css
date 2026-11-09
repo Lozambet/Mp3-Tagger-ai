@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --win-accent: #0067c0;
+    --win-accent-hover: #1979c9;
+    --win-bg: #f3f3f3;
+    --win-surface: #ffffff;
+    --win-border: rgba(0, 0, 0, 0.08);
+  }
+
+  body {
+    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Windows 11 style thin scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.3);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 100, 0.5);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Windows Fluent animation */
+@keyframes win-pulse-glow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(0.99);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.win-anim-pulse {
+  animation: win-pulse-glow 2s infinite ease-in-out;
+}

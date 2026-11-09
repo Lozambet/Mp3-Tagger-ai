@@ -1,0 +1,6 @@
+{
+  "name": "Windows MP3 Tagger AI",
+  "description": "Applicazione minimale in stile Windows UI per rinominare file MP3 con intelligenza artificiale nella struttura Titolo - Artista Feat. Featuring e impostare i metadati ID3 ad alta velocità.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

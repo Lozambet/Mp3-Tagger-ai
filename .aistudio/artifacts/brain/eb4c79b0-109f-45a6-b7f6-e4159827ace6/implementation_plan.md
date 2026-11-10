@@ -1,94 +1,101 @@
-# Minimal UI & Distraction-Free Redesign
+# Riconoscimento Artisti tramite API Musicali Ufficiali e Menu Candidati
 
-Un restyling completo dell'interfaccia utente mirato a eliminare tutte le didascalie ridondanti, badge secondari e micro-elementi di disturbo visivo, trasformando l'applicazione in un tool audio desktop estremamente pulito, moderno, veloce e intuitivo.
+Sostituzione del fragile web-scraping con le API musicali ufficiali e certificate di **iTunes Search** e **MusicBrainz**, abbinate a un menu a tendina contestuale (*Candidate Picker*) a 1-clic per risolvere ambiguità su brani omonimi nel rap italiano.
 
 ---
 
-## User Review & Critical Decisions
+## Decisioni Utente Confermate (Fase 1)
 
 > [!IMPORTANT]
-> Decisioni confermate dall'utente nella fase di intervista:
-> - **Elementi da eliminare**: rimozione completa di badge di stato secondari (es. pillole "Pronto", "Istantaneo <5ms", badge telemetry "Cloud SQL"), testi esplicativi lunghi e note descrittive.
-> - **Barra dei Comandi**: layout compatto a singola riga focalizzato esclusivamente sulle azioni primarie (Carica, Scambia Titolo/Artista, Rifinisci AI, Scarica).
-> - **Tabella Brani**: griglia essenziale, lineare e ad alto contrasto senza colonne ingombranti o scatter di badge colorati ad ogni riga.
+> - **Fonte Dati Scelta**: API musicali ufficiali (**iTunes Search API** e **MusicBrainz**) al posto del web scraping su Google/Genius.
+> - **Risoluzione Ambiguità**: Menu a tendina inline a 1-clic che mostra i migliori candidati ordinati per pertinenza e genere rap/hip-hop italiano.
+> - **Integrità UI**: Stile minimale Windows 11, nessun elemento grafico distraente, evidenziazione rossa pulita sul campo artista vuoto con indicatore discreto del numero di opzioni trovate.
 
 ---
 
-## 1. Overview & Core Concept
-
-- **Cosa fa**: Riorganizza il layout visivo dell'applicazione rimuovendo il rumore visivo (pillole decorative, indicatori di velocità, testi di aiuto ridondanti) per concentrare il 100% dell'attenzione dell'utente sulla visualizzazione dei brani e la modifica rapida dei metadati.
-- **Target & Contesto**: Utente che vuole rinominare e taggare i propri file MP3 in pochi secondi con la massima chiarezza, senza dover leggere spiegazioni continue o navigare tra pulsanti rumorosi.
-- **Valore Chiave**: Interfaccia ariosa, professionale e minimale in pieno stile Windows 11 Fluent / Modern Desktop, dove ogni controllo ha uno scopo chiaro e immediato.
-
----
-
-## 2. Component & Visual Architecture
+## 1. Architettura e Flusso Funzionale
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  🎵 MP3 Tagger                [☀/🌙]  [👤 zambettienrico@gmail.com]     │  <- Minimal Title Bar
-├────────────────────────────────────────────────────────────────────────┤
-│  [+ Aggiungi MP3] [⇄ Inverti] [✨ Rifinisci AI]    [⬇ Scarica MP3 (3)] │  <- Compact Command Bar
-├────────────────────────────────────────────────────────────────────────┤
-│                                                                        │
-│   ☑  Titolo              ⇄  Artista & Feat        Nuovo Nome      ⋯    │  <- Clean Data Grid
-│  ───────────────────────────────────────────────────────────────────   │
-│   ☑  Kichta Lova         ⇄  Nabi; Lilcr           Kichta Lova...  ⬇ ✕  │
-│   ☑  Auto Blu            ⇄  Shiva; Rondodasosa    Auto Blu - ...  ⬇ ✕  │
-│   ☑  10 Cavallini        ⇄  Drillionare; Sfera... 10 Cavallini... ⬇ ✕  │
-│                                                                        │
-├────────────────────────────────────────────────────────────────────────┤
-│   3 brani selezionati · Pronto per il download                 [Log]   │  <- Quiet Status Line
-└────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│                      Frontend UI                       │
+│  - Campo artista vuoto evidenziato in rosso            │
+│  - Ricerca automatica o manuale nel Catalogo Ufficiale │
+│  - Popover / Dropdown "Candidate Picker" a 1-clic      │
+└──────────────────────────┬─────────────────────────────┘
+                           │ POST /api/music-catalog-search
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                  Server Proxy Backend                  │
+│  1. iTunes Search API (Catalogo IT / Hip-Hop/Rap)      │
+│  2. MusicBrainz Recording Search (Dati aperti)         │
+│  3. Normalizzazione, deduplicazione e separazione Feat │
+│  4. Ranking per pertinenza al Rap Italiano             │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│              Risultato JSON Strutturato                │
+│  [                                                     │
+│    { artist: "Gheba", feat: "Pavè", album: "...", ... }│
+│    { artist: "Shiva", feat: "Eiffel 65", ... }         │
+│  ]                                                     │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Principali Modifiche Visive per Componente
-
-1. **Title Bar (`WindowsTitleBar.tsx`)**:
-   - Eliminazione dei badge secondari decorativi (`Cloud SQL (PostgreSQL)`, `50 Cantanti`, `Istantaneo (<5ms)`).
-   - Conservazione del titolo pulito dell'applicazione, del toggle modalità Chiara/Scura e dell'avatar essenziale di Google Auth.
-
-2. **Barra dei Comandi (`WindowsCommandBar.tsx`)**:
-   - Rimozione del badge decorativo centrale `"Istantaneo + AI Batch"`.
-   - Riduzione del testo sui pulsanti:
-     - Da *"Aggiungi File MP3"* a `Aggiungi MP3` (con dropdown leggero per cartella o sample).
-     - Da *"Inverti Titolo ⇄ Artista (X)"* a `Inverti Titolo/Artista`.
-     - Da *"Rifinisci con AI (Batch Rapido)"* a `Rifinisci con AI`.
-     - Pulsante di download essenziale e chiaro: `Scarica MP3` o `Scarica ZIP` con menu compatto per scegliere la modalità.
-   - Accesso al gestore cantanti noti tramite icona pulita e discreta con conteggio essenziale.
-
-3. **Tabella dei Brani (`WindowsTrackTable.tsx`)**:
-   - **Zero Pill / No Badge Scatter**: rimozione dei badge verdi *"Pronto"* e blu *"AI OK"* da ogni singola riga (lo stato nominale è il default; viene mostrato solo un micro-spinner quando un brano è attivamente in elaborazione AI).
-   - **Semplificazione Colonne**:
-     - Checkbox selezione rapida.
-     - *Titolo* (input inline pulito).
-     - *⇄ Inverti* (pulsante rapido a icona).
-     - *Artista* (input inline con supporto punto e virgola `;`).
-     - *Nome File Generato* (anteprima tipografica leggibile).
-     - *Azioni* raggruppate: Ascolta (Play), Scarica diretto, Ispeziona/Dettagli, Elimina riga.
-   - I campi *Album* e *Anno* rimangono accessibili sia nella modale di ispezione completa sia tramite colonna opzionale/discreta senza rubare spazio visivo.
-   - **Empty State Semplificato**: area di rilascio minimale ed elegante, senza lunghi paragrafi tecnici.
-
-4. **Barra di Stato (`WindowsStatusBar.tsx`)**:
-   - Riduzione a una singola linea discreta e non invasiva: conteggio brani e dimensione totale, con link compatto al registro eventi solo se necessario.
+### Vantaggi rispetto al metodo precedente:
+- **Zero allucinazioni e zero rate-limit 429**: L'API iTunes e MusicBrainz sono gratuite, progettate specificamente per query musicali e non vengono bloccate da bot-check.
+- **Dati Certificati**: Nome esatto dell'artista principale, anno di uscita reale, album e featuring ufficiali già separati.
+- **Controllo dell'utente**: Se un titolo come "Boxer" ha più versioni, l'utente vede l'artista con copertina/anno e sceglie quella desiderata con un solo clic.
 
 ---
 
-## 3. Piano di Esecuzione e Verifica
+## 2. Esperienza Utente & Design Visivo
 
-1. **Fase 1 - Refactoring Barra dei Comandi (`WindowsCommandBar.tsx`)**:
-   - Eliminare badge statici e testi descrittivi nei pulsanti.
-   - Rendere il layout compatto a singola riga con icone standard Lucide.
+### A. Stato Visivo del Campo Artista Vuoto
+- Se il file non ha artista: il campo rimane vuoto con bordo e glow rosso tenue (`border-red-500/60 bg-red-500/5`).
+- Al clic o alla ricerca rapida, compare un badge/pulsante discreto: `Opzioni trovate (3) ▼`.
 
-2. **Fase 2 - Semplificazione Tabella Brani (`WindowsTrackTable.tsx`)**:
-   - Rimuovere i badge di stato ridondanti per ciascuna riga.
-   - Sfoltire l'header della tabella eliminando didascalie e label ingombranti.
-   - Ridisegnare l'area di drop iniziale (drag & drop) per un aspetto minimale.
+### B. Menu a Tendina "Candidate Picker" (Minimal Windows 11)
+- Popover agganciato direttamente alla riga della canzone (`absolute z-40 bg-[#1e1e1e] border border-[#383838] rounded-md shadow-2xl`).
+- Ciascuna opzione mostra:
+  - Miniatura copertina (32x32px) o icona disco se assente.
+  - **Artista Principale** in evidenza (con eventuale `Feat. Artista Ospite` in grigio chiaro).
+  - Titolo canzone, Anno di uscita e Genere (es. *Hip-Hop/Rap*).
+- Cliccando su un candidato:
+  - Il campo Artista si popola istantaneamente.
+  - Eventuali featuring vengono inseriti nel rispettivo campo.
+  - Il nome file suggerito viene ricalcolato in tempo reale.
+  - Il bordo rosso scompare e la riga torna neutra.
 
-3. **Fase 3 - Semplificazione TitleBar e StatusBar (`WindowsTitleBar.tsx` & `WindowsStatusBar.tsx`)**:
-   - Rimuovere chip decorativi e status clutter.
-   - Mantenere la coerenza del tema Dark/Light con bordi ultra-sottili (hairline 1px) e spaziatura ariosa.
+---
 
-4. **Fase 4 - Verifica**:
-   - Compilazione con `compile_applet` e validazione statica con `lint_applet`.
-   - Test visivo e funzionale di caricamento brani, inversione, rifinitura AI e download smart.
+## 3. Dettaglio Implementazione Tecnica
+
+### Endpoint Backend (`server.ts`):
+- `POST /api/music-catalog-search`:
+  - Input: `{ title: string, hintGenre?: string }`
+  - Chiamata contemporanea a **iTunes Search API** (`https://itunes.apple.com/search?term=${encodeURIComponent(title)}&country=IT&entity=song&limit=10`) e fallback **MusicBrainz**.
+  - Filtro e classificazione: priorità ai brani con genere `Hip-Hop/Rap`, `Musica Italiana` o artisti già presenti nel dizionario locale/Cloud SQL.
+  - Restituzione di un array di candidati pronti all'uso.
+
+### Componente Frontend:
+- `src/components/CandidatePickerDropdown.tsx`:
+  - Componente dropdown minimale accessibile da tastiera (`Esc` per chiudere, frecce per navigare).
+  - Apertura/chiusura automatica con click-outside handler.
+- Integrazione in `TrackRow.tsx` / `App.tsx`:
+  - Sostituzione della vecchia modal di autorizzazione Google Search con l'integrazione del catalogo ufficiale.
+  - Possibilità di cercare un singolo brano o lanciare la scansione di tutti i brani senza artista.
+
+---
+
+## 4. Piano di Verifica
+
+1. **Test brani di prova**:
+   - `Boxer.mp3` -> Ricerca catalogo -> Appare `Gheba` come primo candidato rap italiano.
+   - `Auto Blu.mp3` -> Appare `Shiva` con `Eiffel 65`.
+   - `Kichta Lova.mp3` -> Appare `Nabi` con `Lilcr`.
+2. **Verifica Interazione**:
+   - Clic sul candidato: popolazione immediata di Artista, Feat e Nome File.
+   - Nessun crash o ritardo: risposta istantanea (<300ms).
+3. **Compilazione & Linting**:
+   - Esecuzione combinata di `compile_applet` e `lint_applet` prima della consegna.

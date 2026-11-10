@@ -18,7 +18,10 @@ import {
   FilePlus2,
   ArrowLeftRight,
   Search,
+  Music,
+  ChevronDown,
 } from 'lucide-react';
+import { CandidatePickerDropdown, MusicCandidate } from './CandidatePickerDropdown';
 
 interface WindowsTrackTableProps {
   tracks: TrackMetadata[];
@@ -36,6 +39,7 @@ interface WindowsTrackTableProps {
   onToggleSelectAll: () => void;
   onDownloadSingleTrack?: (track: TrackMetadata) => void;
   onRequestSearchArtist?: (track: TrackMetadata) => void;
+  onSelectCatalogCandidate?: (track: TrackMetadata, candidate: MusicCandidate) => void;
 }
 
 export const WindowsTrackTable: React.FC<WindowsTrackTableProps> = ({
@@ -53,10 +57,60 @@ export const WindowsTrackTable: React.FC<WindowsTrackTableProps> = ({
   onToggleSelectAll,
   onDownloadSingleTrack,
   onRequestSearchArtist,
+  onSelectCatalogCandidate,
 }) => {
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Music Catalog Candidates state
+  const [activeCandidateTrackId, setActiveCandidateTrackId] = useState<string | null>(null);
+  const [candidatesMap, setCandidatesMap] = useState<Record<string, MusicCandidate[]>>({});
+  const [loadingCandidatesMap, setLoadingCandidatesMap] = useState<Record<string, boolean>>({});
+
+  const handleOpenCandidatePicker = async (track: TrackMetadata) => {
+    if (activeCandidateTrackId === track.id) {
+      setActiveCandidateTrackId(null);
+      return;
+    }
+    setActiveCandidateTrackId(track.id);
+
+    if (!candidatesMap[track.id]) {
+      setLoadingCandidatesMap((prev) => ({ ...prev, [track.id]: true }));
+      try {
+        const res = await fetch('/api/music-catalog-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: track.title, originalFilename: track.originalFilename }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.candidates)) {
+            setCandidatesMap((prev) => ({ ...prev, [track.id]: data.candidates }));
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching candidates:', err);
+      } finally {
+        setLoadingCandidatesMap((prev) => ({ ...prev, [track.id]: false }));
+      }
+    }
+  };
+
+  const handleSelectCandidate = (track: TrackMetadata, cand: MusicCandidate) => {
+    const newFilename = buildFilename(track.title, cand.artist, cand.featuring);
+    onUpdateTrack(track.id, {
+      artist: cand.artist,
+      featuring: cand.featuring,
+      album: track.album || cand.album,
+      year: track.year || cand.year,
+      suggestedFilename: newFilename,
+    });
+    if (onSelectCatalogCandidate) {
+      onSelectCatalogCandidate(track, cand);
+    }
+    setActiveCandidateTrackId(null);
+  };
 
   // Audio preview toggle
   const togglePlayAudio = (track: TrackMetadata) => {
@@ -313,22 +367,34 @@ export const WindowsTrackTable: React.FC<WindowsTrackTableProps> = ({
                           placeholder={isArtistMissing ? '' : 'Artista'}
                           title={
                             isArtistMissing
-                              ? 'Artista mancante nel nome del file. Clicca per cercarlo su Google.'
+                              ? 'Artista mancante. Clicca su "Scegli" per selezionare dal catalogo ufficiale iTunes & MusicBrainz.'
                               : track.featuring
                               ? `Artista: ${track.artist} | Tag ID3: ${track.artist}; ${track.featuring}`
                               : `Artista: ${track.artist}`
                           }
                         />
-                        {isArtistMissing && onRequestSearchArtist && (
+                        {isArtistMissing && (
                           <button
                             type="button"
-                            onClick={() => onRequestSearchArtist(track)}
-                            title="Cerca artista su Google"
-                            className="absolute right-1 p-0.5 rounded text-red-500 hover:text-red-600 hover:bg-red-500/20 transition-colors cursor-pointer"
+                            onClick={() => (onRequestSearchArtist ? onRequestSearchArtist(track) : handleOpenCandidatePicker(track))}
+                            title="Identifica artista su iTunes (Italia)"
+                            className="absolute right-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 dark:text-red-300 transition-colors flex items-center gap-1 cursor-pointer"
                           >
-                            <Search className="w-3 h-3" />
+                            <Music className="w-2.5 h-2.5" />
+                            <span>iTunes</span>
                           </button>
                         )}
+
+                        {/* Candidate Picker Dropdown Menu */}
+                        <CandidatePickerDropdown
+                          isOpen={activeCandidateTrackId === track.id}
+                          isLoading={Boolean(loadingCandidatesMap[track.id])}
+                          candidates={candidatesMap[track.id] || []}
+                          trackTitle={track.title}
+                          isDarkMode={isDarkMode}
+                          onSelectCandidate={(cand) => handleSelectCandidate(track, cand)}
+                          onClose={() => setActiveCandidateTrackId(null)}
+                        />
                       </div>
                       {track.album && (
                         <div className="text-[10px] text-neutral-400 truncate px-1 mt-0.5">

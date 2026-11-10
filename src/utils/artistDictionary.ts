@@ -422,8 +422,8 @@ export function extractArtistsAndTitle(
 
     const matchesA = countMatches(partA);
     const matchesB = countMatches(partB);
-    const hasArtistDelimitersB = /[,&/x]|\bfeat\b|\bft\b/i.test(partB);
-    const hasArtistDelimitersA = /[,&/x]|\bfeat\b|\bft\b/i.test(partA);
+    const hasArtistDelimitersB = /[,&;/]|\s+x\s+|\bfeat\.?\b|\bft\.?\b/i.test(partB);
+    const hasArtistDelimitersA = /[,&;/]|\s+x\s+|\bfeat\.?\b|\bft\.?\b/i.test(partA);
 
     // If one part contained (feat. ...), standard convention is that (feat. ...) is attached to the Title!
     if (featWasInPartA && !featWasInPartB) {
@@ -484,7 +484,7 @@ export function extractArtistsAndTitle(
   if (inlineFeatMatch) {
     const featStr = inlineFeatMatch[1].trim();
     if (featStr) {
-      const splitFeats = featStr.split(/[,;&/x]/i).map((s) => s.trim()).filter(Boolean);
+      const splitFeats = featStr.split(/\s*[,;&/]\s*|\s+x\s+/i).map((s) => s.trim()).filter(Boolean);
       extractedFeats.push(...splitFeats);
     }
     artistSide = artistSide.replace(inlineFeatRegex, ' ').trim();
@@ -492,7 +492,7 @@ export function extractArtistsAndTitle(
 
   // Split multiple artists separated by commas, &, x, /, ;: e.g. "Nabi, LILCR" or "Gheba; Pavè"
   const rawArtistTokens = artistSide
-    .split(/[,;&/x]/i)
+    .split(/\s*[,;&/]\s*|\s+x\s+/i)
     .map((s) => s.trim())
     .filter(Boolean);
 
@@ -507,7 +507,7 @@ export function extractArtistsAndTitle(
   if (titleInlineFeat) {
     const featStr = titleInlineFeat[1].trim();
     if (featStr) {
-      const splitFeats = featStr.split(/[,&/x]/i).map((s) => s.trim()).filter(Boolean);
+      const splitFeats = featStr.split(/\s*[,;&/]\s*|\s+x\s+/i).map((s) => s.trim()).filter(Boolean);
       extractedFeats.push(...splitFeats);
     }
     titleSide = titleSide.replace(inlineFeatRegex, ' ').trim();

@@ -19,8 +19,9 @@ import { WindowsLogViewer } from './components/WindowsLogViewer';
 import { WindowsTrackInspectorModal } from './components/WindowsTrackInspectorModal';
 import { WindowsArtistManagerModal } from './components/WindowsArtistManagerModal';
 import { WindowsNewArtistsPromptModal } from './components/WindowsNewArtistsPromptModal';
-import { WindowsGoogleSearchAuthModal } from './components/WindowsGoogleSearchAuthModal';
+import { WindowsItunesSearchModal } from './components/WindowsItunesSearchModal';
 import { WindowsStatusBar } from './components/WindowsStatusBar';
+import { MusicCandidate } from './components/CandidatePickerDropdown';
 import {
   getKnownArtists,
   fetchKnownArtistsFromCloud,
@@ -41,10 +42,9 @@ export default function App() {
   const [isArtistManagerOpen, setIsArtistManagerOpen] = useState<boolean>(false);
   const [artistCount, setArtistCount] = useState<number>(() => getKnownArtists().length);
 
-  // Google Search Grounding for Missing Artists
-  const [tracksToSearchGoogle, setTracksToSearchGoogle] = useState<TrackMetadata[]>([]);
-  const [isGoogleSearchAuthOpen, setIsGoogleSearchAuthOpen] = useState<boolean>(false);
-  const [isSearchingGoogle, setIsSearchingGoogle] = useState<boolean>(false);
+  // iTunes & Italian Music Catalog Search for Missing Artists
+  const [tracksToSearchItunes, setTracksToSearchItunes] = useState<TrackMetadata[]>([]);
+  const [isItunesSearchModalOpen, setIsItunesSearchModalOpen] = useState<boolean>(false);
 
   // Cloud detection for newly discovered artists
   const [newDiscoveredArtists, setNewDiscoveredArtists] = useState<string[]>([]);
@@ -221,11 +221,11 @@ export default function App() {
     // Detect if any tracks are missing the artist name in the filename
     const tracksWithoutArtist = newTracks.filter((t) => !t.artist || t.artist.trim() === '');
     if (tracksWithoutArtist.length > 0) {
-      setTracksToSearchGoogle(tracksWithoutArtist);
-      setIsGoogleSearchAuthOpen(true);
+      setTracksToSearchItunes(tracksWithoutArtist);
+      setIsItunesSearchModalOpen(true);
       addLog(
         'warning',
-        `Per ${tracksWithoutArtist.length} ${tracksWithoutArtist.length === 1 ? 'brano' : 'brani'} l'artista non compare nel nome del file. Richiesta autorizzazione per ricerca Google.`,
+        `Per ${tracksWithoutArtist.length} ${tracksWithoutArtist.length === 1 ? 'brano' : 'brani'} l'artista non compare nel nome del file. Avviata ricerca nel catalogo iTunes (Italia).`,
         undefined,
         `Brani senza artista: ${tracksWithoutArtist.map((t) => t.title).join(', ')}`
       );
@@ -280,99 +280,135 @@ export default function App() {
     setNewDiscoveredArtists([]);
   };
 
-  // Google Search Grounding for Missing Artists
-  const handleRequestSearchArtist = (track: TrackMetadata) => {
-    setTracksToSearchGoogle([track]);
-    setIsGoogleSearchAuthOpen(true);
-  };
+  // Official Music Catalog candidate selected from dropdown (iTunes & MusicBrainz)
+  const handleSelectCatalogCandidate = async (
+    targetTrack: TrackMetadata,
+    candidate: MusicCandidate
+  ) => {
+    const newTitle = targetTrack.title;
+    const newArtist = candidate.artist;
+    const newFeat = candidate.featuring;
+    const newFilename = buildFilename(newTitle, newArtist, newFeat);
 
-  const handleAuthorizeGoogleSearch = async () => {
-    if (tracksToSearchGoogle.length === 0) return;
-    setIsSearchingGoogle(true);
+    const updated: TrackMetadata = {
+      ...targetTrack,
+      artist: newArtist,
+      featuring: newFeat,
+      album: targetTrack.album || candidate.album,
+      year: targetTrack.year || candidate.year,
+      suggestedFilename: newFilename,
+    };
 
     try {
-      const updatedMap = new Map<string, TrackMetadata>();
+      const blob = await embedTagsAndCreateBlob(updated);
+      updated.processedBlob = blob;
+      updated.processedUrl = URL.createObjectURL(blob);
+      updated.status = 'completed';
+    } catch (e) {
+      console.warn('Embed tag error:', e);
+    }
 
-      for (const targetTrack of tracksToSearchGoogle) {
-        addLog(
-          'info',
-          `Avviata ricerca Google per identificare l'artista di "${targetTrack.title}"...`,
-          targetTrack.originalFilename
-        );
+    setTracks((prev) => prev.map((t) => (t.id === targetTrack.id ? updated : t)));
 
-        const res = await fetch('/api/search-artist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: targetTrack.title,
-            originalFilename: targetTrack.originalFilename,
-          }),
-        });
+    addLog(
+      'success',
+      `Artista impostato dal catalogo (${candidate.source}): "${newArtist}"${newFeat ? ` Feat. ${newFeat}` : ''} per "${newTitle}"`,
+      targetTrack.originalFilename,
+      candidate.album ? `Album: ${candidate.album} (${candidate.year || 'N/D'}) • Genere: ${candidate.genre}` : undefined
+    );
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.found && data.artist) {
-            const newTitle = data.songTitle || targetTrack.title;
-            const newArtist = data.artist;
-            const newFeat = data.featuring || targetTrack.featuring;
-            const newFilename = buildFilename(newTitle, newArtist, newFeat);
-
-            const updated: TrackMetadata = {
-              ...targetTrack,
-              title: newTitle,
-              artist: newArtist,
-              featuring: newFeat,
-              suggestedFilename: newFilename,
-            };
-
-            try {
-              const blob = await embedTagsAndCreateBlob(updated);
-              updated.processedBlob = blob;
-              updated.processedUrl = URL.createObjectURL(blob);
-              updated.status = 'completed';
-            } catch (embedErr) {
-              console.warn('Embed error after google search:', embedErr);
-            }
-
-            updatedMap.set(targetTrack.id, updated);
-
-            const sourcesText =
-              data.sources && data.sources.length > 0
-                ? `Fonti Google: ${data.sources.map((s: { title: string }) => s.title).join(' • ')}`
-                : undefined;
-
-            addLog(
-              'success',
-              `Artista trovato su Google: "${newArtist}"${newFeat ? ` Feat. ${newFeat}` : ''} per "${newTitle}"`,
-              targetTrack.originalFilename,
-              sourcesText
-            );
-          } else {
-            addLog(
-              'warning',
-              `Nessun artista identificato con certezza su Google per "${targetTrack.title}". Puoi inserirlo manualmente.`,
-              targetTrack.originalFilename
-            );
-          }
-        }
-      }
-
-      if (updatedMap.size > 0) {
-        setTracks((prev) => prev.map((t) => updatedMap.get(t.id) || t));
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog('error', 'Errore durante la ricerca con Google', undefined, msg);
-    } finally {
-      setIsSearchingGoogle(false);
-      setIsGoogleSearchAuthOpen(false);
-      setTracksToSearchGoogle([]);
+    // Save newly discovered artist to Cloud SQL database dictionary
+    const newlyDetected = [newArtist, ...newFeat.split(',')].map((s) => s.trim()).filter(Boolean);
+    const unknown = findUnknownArtists(newlyDetected, getKnownArtists());
+    if (unknown.length > 0) {
+      saveBatchArtistsToCloud(unknown)
+        .then((saved) => {
+          setArtistCount(saved.length);
+          addLog('info', `Aggiunto nuovo artista al database Cloud SQL: ${unknown.join(', ')}`);
+        })
+        .catch((e) => console.warn('Could not save artist to DB:', e));
     }
   };
 
-  const handleCancelGoogleSearch = () => {
-    setIsGoogleSearchAuthOpen(false);
-    setTracksToSearchGoogle([]);
+  // Open iTunes & Italian Catalog Search modal for all tracks currently missing an artist
+  const handleSearchAllMissingInCatalog = () => {
+    const missing = tracks.filter((t) => !t.artist || t.artist.trim() === '');
+    if (missing.length === 0) return;
+    setTracksToSearchItunes(missing);
+    setIsItunesSearchModalOpen(true);
+  };
+
+  // Open iTunes Search modal for a single track
+  const handleRequestSearchArtist = (track: TrackMetadata) => {
+    setTracksToSearchItunes([track]);
+    setIsItunesSearchModalOpen(true);
+  };
+
+  // Apply candidate results from the iTunes Search modal
+  const handleApplyItunesResults = async (selectedMap: Map<string, MusicCandidate>) => {
+    if (selectedMap.size === 0) {
+      setIsItunesSearchModalOpen(false);
+      return;
+    }
+
+    const updatedTracks = [...tracks];
+    const newlyDiscovered: string[] = [];
+
+    for (const [trackId, candidate] of selectedMap.entries()) {
+      const idx = updatedTracks.findIndex((t) => t.id === trackId);
+      if (idx !== -1) {
+        const targetTrack = updatedTracks[idx];
+        const newTitle = targetTrack.title;
+        const newArtist = candidate.artist;
+        const newFeat = candidate.featuring;
+        const newFilename = buildFilename(newTitle, newArtist, newFeat);
+
+        const updated: TrackMetadata = {
+          ...targetTrack,
+          artist: newArtist,
+          featuring: newFeat,
+          album: targetTrack.album || candidate.album,
+          year: targetTrack.year || candidate.year,
+          suggestedFilename: newFilename,
+        };
+
+        try {
+          const blob = await embedTagsAndCreateBlob(updated);
+          updated.processedBlob = blob;
+          updated.processedUrl = URL.createObjectURL(blob);
+          updated.status = 'completed';
+        } catch (e) {
+          console.warn('Embed tag error:', e);
+        }
+
+        updatedTracks[idx] = updated;
+
+        addLog(
+          'success',
+          `Artista impostato da iTunes: "${newArtist}"${newFeat ? ` Feat. ${newFeat}` : ''} per "${newTitle}"`,
+          targetTrack.originalFilename,
+          candidate.album ? `Album: ${candidate.album} (${candidate.year || 'N/D'}) • Genere: ${candidate.genre}` : undefined
+        );
+
+        if (newArtist) newlyDiscovered.push(newArtist);
+        if (newFeat) newlyDiscovered.push(...newFeat.split(',').map((s) => s.trim()).filter(Boolean));
+      }
+    }
+
+    setTracks(updatedTracks);
+    setIsItunesSearchModalOpen(false);
+    setTracksToSearchItunes([]);
+
+    // Automatically register newly discovered artists into Cloud SQL dictionary
+    const unknown = findUnknownArtists(newlyDiscovered, getKnownArtists());
+    if (unknown.length > 0) {
+      saveBatchArtistsToCloud(unknown)
+        .then((saved) => {
+          setArtistCount(saved.length);
+          addLog('info', `Aggiunto nuovo artista al database Cloud SQL: ${unknown.join(', ')}`);
+        })
+        .catch((e) => console.warn('Could not save artist to DB:', e));
+    }
   };
 
   // Add demo sample files
@@ -850,6 +886,8 @@ export default function App() {
           totalTracks={tracks.length}
           selectedCount={selectedTrackIds.size}
           artistCount={artistCount}
+          missingArtistCount={tracks.filter((t) => !t.artist || t.artist.trim() === '').length}
+          onSearchMissingArtistsInCatalog={handleSearchAllMissingInCatalog}
           onOpenArtistManager={() => setIsArtistManagerOpen(true)}
           isLogOpen={isLogOpen}
           onToggleLog={() => setIsLogOpen(!isLogOpen)}
@@ -883,6 +921,7 @@ export default function App() {
             onToggleSelectTrack={handleToggleSelectTrack}
             onToggleSelectAll={handleToggleSelectAll}
             onRequestSearchArtist={handleRequestSearchArtist}
+            onSelectCatalogCandidate={handleSelectCatalogCandidate}
           />
         </div>
 
@@ -933,14 +972,13 @@ export default function App() {
           onIgnore={handleIgnoreNewArtists}
         />
 
-        {/* Google Search Authorization Dialog for Missing Artists */}
-        <WindowsGoogleSearchAuthModal
-          isOpen={isGoogleSearchAuthOpen}
+        {/* iTunes & Italian Music Catalog Search Dialog for Missing Artists */}
+        <WindowsItunesSearchModal
+          isOpen={isItunesSearchModalOpen}
           isDarkMode={isDarkMode}
-          tracksToSearch={tracksToSearchGoogle}
-          isSearching={isSearchingGoogle}
-          onAuthorize={handleAuthorizeGoogleSearch}
-          onCancel={handleCancelGoogleSearch}
+          tracksToSearch={tracksToSearchItunes}
+          onApplyResults={handleApplyItunesResults}
+          onCancel={() => setIsItunesSearchModalOpen(false)}
         />
       </div>
     </div>

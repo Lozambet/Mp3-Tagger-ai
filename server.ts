@@ -372,6 +372,117 @@ REGOLE TASSATIVE:
 });
 
 // GOOGLE SEARCH GROUNDING: Search Main Artist using gemini-3.8-flash with googleSearch tool
+// Search web using exact user query format: who sings "titolo" Genius rap ITA
+async function searchWebForArtist(title: string): Promise<{
+  artist: string;
+  featuring: string;
+  sources: Array<{ title: string; uri: string }>;
+  found: boolean;
+}> {
+  const cleanTitle = (title || '').replace(/"/g, '').trim();
+  const query = `who sings "${cleanTitle}" Genius rap ITA`;
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    });
+
+    if (!resp.ok) {
+      return { artist: '', featuring: '', sources: [], found: false };
+    }
+
+    const html = await resp.text();
+
+    const titleMatches = [...html.matchAll(/<a[^>]+class=\"[^\"]*result__a[^\"]*\"[^>]*>(.*?)<\/a>/gi)];
+    const titles = titleMatches.map((m) =>
+      m[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/&quot;/g, '"')
+        .replace(/&#x27;/g, "'")
+        .replace(/&amp;/g, '&')
+        .trim()
+    );
+
+    const urlMatches = [...html.matchAll(/<a[^>]+class=\"[^\"]*result__url[^\"]*\"[^>]*href=\"([^\"]+)\"/gi)];
+    const sources: Array<{ title: string; uri: string }> = [];
+    for (let i = 0; i < titles.length; i++) {
+      let rawUri = urlMatches[i]?.[1] || '';
+      if (rawUri.includes('uddg=')) {
+        const uMatch = rawUri.match(/uddg=([^&]+)/);
+        if (uMatch) rawUri = decodeURIComponent(uMatch[1]);
+      }
+      if (titles[i]) {
+        sources.push({
+          title: titles[i],
+          uri: rawUri.startsWith('http') ? rawUri : `https://${rawUri}`,
+        });
+      }
+    }
+
+    // Heuristically extract artist and featuring from search result titles
+    let bestArtist = '';
+    const bestFeats: string[] = [];
+
+    const titleLower = title.toLowerCase();
+    for (const t of titles) {
+      if (!t.toLowerCase().includes(titleLower)) continue;
+      const clean = t
+        .replace(
+          /\s*[-|–—]\s*(YouTube|Genius|Spotify|Testo|Lyrics|Video|Musely|LETRAS\.COM|Apple Music|Amazon Music|Plyric).*/gi,
+          ''
+        )
+        .replace(/\|.*/g, '')
+        .trim();
+      const ext = extractArtistsAndTitle(clean);
+      if (ext.artist && !bestArtist) {
+        bestArtist = ext.artist;
+      }
+      if (ext.featuring) {
+        ext.featuring.split(/\s*[,;&/]\s*|\s+x\s+/i).forEach((rawF) => {
+          const stripped = rawF.replace(/\b(prod\.?|remix|sample|tracklist)\b.*/gi, '').trim();
+          const f = formatProperCase(stripped.replace(/[\[\]|]/g, '').trim());
+          if (
+            f &&
+            f.length > 1 &&
+            !f.toLowerCase().includes('plyric') &&
+            !f.toLowerCase().includes('genius') &&
+            !f.toLowerCase().includes('testo') &&
+            !f.toLowerCase().includes('youtube') &&
+            !f.toLowerCase().includes('video') &&
+            !/\b\d{4}\b/.test(f) &&
+            !bestFeats.some((bf) => bf.toLowerCase() === f.toLowerCase()) &&
+            f.toLowerCase() !== bestArtist.toLowerCase()
+          ) {
+            bestFeats.push(f);
+          }
+        });
+      }
+    }
+
+    // If the detected artist is identical to the song title, swap with featuring
+    if (bestArtist.toLowerCase() === titleLower && bestFeats.length > 0) {
+      bestArtist = bestFeats[0];
+      bestFeats.shift();
+    }
+
+    return {
+      artist: bestArtist,
+      featuring: bestFeats.join(', '),
+      sources: sources.slice(0, 5),
+      found: Boolean(bestArtist),
+    };
+  } catch (err) {
+    console.warn('Web search fallback error:', err);
+    return { artist: '', featuring: '', sources: [], found: false };
+  }
+}
+
+// GOOGLE SEARCH GROUNDING: Search Main Artist with user-specified query pattern:
+// who sings "titolo" Genius rap ITA
 app.post('/api/search-artist', async (req: Request, res: Response): Promise<void> => {
   const { title, originalFilename } = req.body;
   if (!title) {
@@ -379,127 +490,42 @@ app.post('/api/search-artist', async (req: Request, res: Response): Promise<void
     return;
   }
 
+  const cleanTitle = (title || '').replace(/"/g, '').trim();
+  let artist = '';
+  let featuring = '';
+  let found = false;
+  let sources: Array<{ title: string; uri: string }> = [];
+
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: 'GEMINI_API_KEY non configurata' });
-    return;
-  }
 
-  try {
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
+  // 1. Try Gemini with Google Search Grounding using user's explicit query format:
+  // who sings "titolo" Genius rap ITA
+  if (apiKey) {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
         },
-      },
-    });
+      });
 
-    const prompt = `Cerca con Google chi è l'artista o il cantante principale della canzone/brano musicale intitolato: "${title}".
-Nome file originario: "${originalFilename || title}".
+      const prompt = `Fai una ricerca su Google con questa query: who sings "${cleanTitle}" Genius rap ITA
+Nome canzone / file originale: "${originalFilename || cleanTitle}".
 
 REGOLE TASSATIVE:
-1. Usa Google Search per trovare informazioni reali e accurate sull'interprete/cantante principale della canzone.
-2. Rispondi RIGOROSAMENTE con un oggetto JSON valido (senza testo prima o dopo) con la seguente struttura:
+1. Identifica chi canta o ha rilasciato originariamente questa canzone rap italiana cercata con la formula: who sings "${cleanTitle}" Genius rap ITA.
+2. Rispondi RIGOROSAMENTE con un oggetto JSON valido (senza markdown o testo prima e dopo) con questa struttura:
 {
   "artist": "Nome Artista Principale",
-  "featuring": "Eventuali artisti in featuring separati da virgola (lascia stringa vuota se nessuno)",
-  "found": true,
-  "songTitle": "Titolo corretto"
+  "featuring": "Eventuali featuring separati da virgola (lascia stringa vuota se nessuno)",
+  "songTitle": "${cleanTitle}",
+  "found": true
 }
-3. Capitalizzazione corretta (Title Case): tutte le parole iniziano con la maiuscola tranne parole di 1-2 lettere in mezzo (es. "di", "a", "da", "con", "il", "la", "e", "of", "to"). NON usare MAI parentesi quadre.
+3. Capitalizzazione corretta (Title Case: prima lettera maiuscola per parola, parole di 1-2 lettere in mezzo minuscole).
 4. Se non trovi la canzone con certezza, rispondi con {"found": false, "artist": "", "featuring": ""}.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
-
-    const rawText = response.text || '';
-    let parsed = { artist: '', featuring: '', found: false, songTitle: '' };
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        parsed = JSON.parse(jsonMatch[0]);
-      } catch (e) {
-        console.warn('JSON parse fallback in search-artist:', e);
-      }
-    }
-
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const sources = groundingChunks
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((c: any) =>
-        c.web?.title ? { title: String(c.web.title), uri: String(c.web.uri || '') } : null
-      )
-      .filter((s): s is { title: string; uri: string } => s !== null);
-
-    const cleanArtist = formatProperCase((parsed.artist || '').replace(/[\[\]]/g, '').trim());
-    const cleanFeat = parsed.featuring
-      ? parsed.featuring
-          .split(/[,&/x]/i)
-          .map((f: string) => formatProperCase(f.replace(/[\[\]]/g, '').trim()))
-          .filter(Boolean)
-          .join(', ')
-      : '';
-
-    res.json({
-      success: true,
-      found: parsed.found ?? Boolean(cleanArtist),
-      artist: cleanArtist,
-      featuring: cleanFeat,
-      songTitle: parsed.songTitle ? formatProperCase(parsed.songTitle) : title,
-      sources,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('Errore ricerca artista con Google:', msg);
-    res.status(500).json({ error: msg });
-  }
-});
-
-// Batch search multiple missing artists with Google Search
-app.post('/api/search-artists-batch', async (req: Request, res: Response): Promise<void> => {
-  const { tracks } = req.body;
-  if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
-    res.status(400).json({ error: 'Nessuna traccia inviata' });
-    return;
-  }
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: 'GEMINI_API_KEY non configurata' });
-    return;
-  }
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-
-  const results: Record<
-    string,
-    { artist: string; featuring: string; found: boolean; sources: Array<{ title: string; uri: string }> }
-  > = {};
-
-  for (const track of tracks) {
-    try {
-      const prompt = `Cerca con Google chi è l'artista o il cantante principale della canzone/brano musicale: "${track.title}".
-Nome file originario: "${track.originalFilename || track.title}".
-
-Rispondi con un oggetto JSON valido:
-{
-  "artist": "Nome Artista Principale",
-  "featuring": "Eventuali featuring separati da virgola",
-  "found": true
-}`;
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: prompt,
@@ -509,45 +535,382 @@ Rispondi con un oggetto JSON valido:
       });
 
       const rawText = response.text || '';
-      let parsed = { artist: '', featuring: '', found: false };
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {
-          // ignore
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.artist) {
+            artist = formatProperCase(parsed.artist.replace(/[\[\]]/g, '').trim());
+            found = parsed.found ?? true;
+          }
+          if (parsed.featuring) {
+            featuring = parsed.featuring
+              .split(/\s*[,;&/]\s*|\s+x\s+/i)
+              .map((f: string) => formatProperCase(f.replace(/[\[\]]/g, '').trim()))
+              .filter(Boolean)
+              .join(', ');
+          }
+        } catch (e) {
+          console.warn('JSON parse fallback in search-artist:', e);
         }
       }
 
       const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      const sources = groundingChunks
+      sources = groundingChunks
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .map((c: any) =>
           c.web?.title ? { title: String(c.web.title), uri: String(c.web.uri || '') } : null
         )
         .filter((s): s is { title: string; uri: string } => s !== null);
-
-      const cleanArtist = formatProperCase((parsed.artist || '').replace(/[\[\]]/g, '').trim());
-      const cleanFeat = parsed.featuring
-        ? parsed.featuring
-            .split(/[,&/x]/i)
-            .map((f: string) => formatProperCase(f.replace(/[\[\]]/g, '').trim()))
-            .filter(Boolean)
-            .join(', ')
-        : '';
-
-      results[track.id] = {
-        artist: cleanArtist,
-        featuring: cleanFeat,
-        found: parsed.found ?? Boolean(cleanArtist),
-        sources,
-      };
-    } catch {
-      results[track.id] = { artist: '', featuring: '', found: false, sources: [] };
+    } catch (aiErr: unknown) {
+      console.warn('Gemini Search Grounding call warning (falling back to web search):', aiErr);
     }
   }
 
+  // 2. If Gemini was rate limited (429) or couldn't find artist, execute real web search with exact user query:
+  // who sings "titolo" Genius rap ITA
+  if (!found || !artist) {
+    const webResult = await searchWebForArtist(title);
+    if (webResult.found && webResult.artist) {
+      artist = webResult.artist;
+      featuring = webResult.featuring || featuring;
+      found = true;
+      if (sources.length === 0) {
+        sources = webResult.sources;
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    found,
+    artist,
+    featuring,
+    songTitle: title,
+    sources,
+  });
+});
+
+// Batch search multiple missing artists
+app.post('/api/search-artists-batch', async (req: Request, res: Response): Promise<void> => {
+  const { tracks } = req.body;
+  if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
+    res.status(400).json({ error: 'Nessuna traccia inviata' });
+    return;
+  }
+
+  const results: Record<
+    string,
+    { artist: string; featuring: string; found: boolean; sources: Array<{ title: string; uri: string }> }
+  > = {};
+
+  for (const track of tracks) {
+    let artist = '';
+    let featuring = '';
+    let found = false;
+    let sources: Array<{ title: string; uri: string }> = [];
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      try {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
+
+        const cleanTrackTitle = (track.title || '').replace(/"/g, '').trim();
+        const prompt = `Fai una ricerca su Google con questa query: who sings "${cleanTrackTitle}" Genius rap ITA
+Nome file originario: "${track.originalFilename || cleanTrackTitle}".
+
+Rispondi con un oggetto JSON valido:
+{
+  "artist": "Nome Artista Principale",
+  "featuring": "Eventuali featuring separati da virgola",
+  "found": true
+}`;
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        });
+
+        const rawText = response.text || '';
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.artist) {
+              artist = formatProperCase(parsed.artist.replace(/[\[\]]/g, '').trim());
+              found = parsed.found ?? true;
+            }
+            if (parsed.featuring) {
+              featuring = parsed.featuring
+                .split(/\s*[,;&/]\s*|\s+x\s+/i)
+                .map((f: string) => formatProperCase(f.replace(/[\[\]]/g, '').trim()))
+                .filter(Boolean)
+                .join(', ');
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        sources = groundingChunks
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((c: any) =>
+            c.web?.title ? { title: String(c.web.title), uri: String(c.web.uri || '') } : null
+          )
+          .filter((s): s is { title: string; uri: string } => s !== null);
+      } catch (e) {
+        console.warn('Batch Gemini search error:', e);
+      }
+    }
+
+    if (!found || !artist) {
+      const webResult = await searchWebForArtist(track.title);
+      if (webResult.found && webResult.artist) {
+        artist = webResult.artist;
+        featuring = webResult.featuring || featuring;
+        found = true;
+        if (sources.length === 0) {
+          sources = webResult.sources;
+        }
+      }
+    }
+
+    results[track.id] = {
+      artist,
+      featuring,
+      found,
+      sources,
+    };
+  }
+
   res.json({ success: true, results });
+});
+
+// OFFICIAL MUSIC CATALOG API (iTunes Search & MusicBrainz)
+export interface MusicCatalogCandidate {
+  id: string;
+  title: string;
+  artist: string;
+  featuring: string;
+  album: string;
+  year: string;
+  genre: string;
+  artworkUrl?: string;
+  source: 'itunes' | 'musicbrainz';
+  isRapOrHipHop: boolean;
+  score: number;
+}
+
+export async function queryMusicCatalog(title: string): Promise<MusicCatalogCandidate[]> {
+  const cleanTitle = (title || '').replace(/[\[\]"]/g, '').trim();
+  if (!cleanTitle) return [];
+
+  const candidates: MusicCatalogCandidate[] = [];
+  const seen = new Set<string>();
+
+  // Fetch known artists list to boost ranking
+  let knownArtists: string[] = DEFAULT_ARTISTS.map((a) => a.canonical.toLowerCase());
+  try {
+    const dbArtists = await getKnownArtistsFromDb();
+    if (dbArtists && dbArtists.length > 0) {
+      knownArtists = dbArtists.map((a) => a.canonical.toLowerCase());
+    }
+  } catch {
+    // fallback to DEFAULT_ARTISTS
+  }
+
+  // 1. iTunes Search API (Official Italy Catalog, Entity: Song)
+  try {
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanTitle)}&country=IT&entity=song&limit=12`;
+    const res = await fetch(itunesUrl, {
+      headers: { 'User-Agent': 'MP3Tagger/1.0 (Windows NT 10.0; Win64; x64)' },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        results?: Array<{
+          trackId: number;
+          trackName: string;
+          artistName: string;
+          collectionName?: string;
+          releaseDate?: string;
+          primaryGenreName?: string;
+          artworkUrl100?: string;
+          artworkUrl60?: string;
+        }>;
+      };
+
+      for (const r of data.results || []) {
+        const rawArtist = r.artistName || '';
+        const parts = rawArtist
+          .split(/\s*[,;&/]\s*|\s+x\s+/i)
+          .map((s) => formatProperCase(s.trim()))
+          .filter(Boolean);
+
+        const artist = parts[0] || rawArtist;
+        const featuring = parts.slice(1).join(', ');
+        const trackTitle = formatProperCase(r.trackName || cleanTitle);
+        const dedupeKey = `${artist.toLowerCase()} - ${trackTitle.toLowerCase()}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const isRap =
+          /rap|hip-hop|trap|urban/i.test(r.primaryGenreName || '') ||
+          /rap|hip-hop|trap/i.test(r.collectionName || '');
+
+        let score = 0;
+        const sLower = cleanTitle.toLowerCase();
+        const tLower = trackTitle.toLowerCase();
+        if (tLower === sLower) score += 100;
+        else if (tLower.startsWith(sLower) || sLower.startsWith(tLower)) score += 60;
+        else if (tLower.includes(sLower) || sLower.includes(tLower)) score += 30;
+
+        if (isRap) score += 50;
+
+        // Boost if artist is in our rap dictionary
+        if (knownArtists.some((k) => artist.toLowerCase().includes(k) || k.includes(artist.toLowerCase()))) {
+          score += 45;
+        }
+
+        if (r.artworkUrl100 || r.artworkUrl60) score += 10;
+
+        candidates.push({
+          id: `itunes-${r.trackId}`,
+          title: trackTitle,
+          artist,
+          featuring,
+          album: r.collectionName || '',
+          year: r.releaseDate ? r.releaseDate.slice(0, 4) : '',
+          genre: r.primaryGenreName || '',
+          artworkUrl: r.artworkUrl100 || r.artworkUrl60 || '',
+          source: 'itunes',
+          isRapOrHipHop: isRap,
+          score,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('iTunes Search catalog error:', err);
+  }
+
+  // 2. MusicBrainz Search API (Official Open Music Encyclopedia)
+  try {
+    const mbUrl = `https://musicbrainz.org/ws/2/recording/?query=recording:"${encodeURIComponent(cleanTitle)}"&fmt=json&limit=6`;
+    const mbRes = await fetch(mbUrl, {
+      headers: { 'User-Agent': 'MP3Tagger/1.0.0 ( support@example.com )' },
+    });
+    if (mbRes.ok) {
+      const mbData = (await mbRes.json()) as {
+        recordings?: Array<{
+          id: string;
+          title: string;
+          'artist-credit'?: Array<{ name: string }>;
+          releases?: Array<{ title?: string; date?: string }>;
+          tags?: Array<{ name: string }>;
+        }>;
+      };
+
+      for (const r of mbData.recordings || []) {
+        const artistCredit = (r['artist-credit'] || []).map((a) => a.name).join(', ');
+        const parts = artistCredit
+          .split(/\s*[,;&/]\s*|\s+x\s+/i)
+          .map((s) => formatProperCase(s.trim()))
+          .filter(Boolean);
+
+        const artist = parts[0] || artistCredit;
+        const featuring = parts.slice(1).join(', ');
+        const trackTitle = formatProperCase(r.title || cleanTitle);
+        const dedupeKey = `${artist.toLowerCase()} - ${trackTitle.toLowerCase()}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const firstRelease = r.releases?.[0];
+        let score = 20;
+        const sLower = cleanTitle.toLowerCase();
+        const tLower = trackTitle.toLowerCase();
+        if (tLower === sLower) score += 100;
+        else if (tLower.includes(sLower) || sLower.includes(tLower)) score += 30;
+
+        if (knownArtists.some((k) => artist.toLowerCase().includes(k) || k.includes(artist.toLowerCase()))) {
+          score += 45;
+        }
+
+        candidates.push({
+          id: `mb-${r.id}`,
+          title: trackTitle,
+          artist,
+          featuring,
+          album: firstRelease?.title || '',
+          year: firstRelease?.date ? firstRelease.date.slice(0, 4) : '',
+          genre: r.tags?.[0]?.name || 'Hip-Hop/Rap',
+          artworkUrl: '',
+          source: 'musicbrainz',
+          isRapOrHipHop: true,
+          score,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('MusicBrainz catalog error:', err);
+  }
+
+  // Sort descending by calculated relevance score
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates;
+}
+
+// POST /api/music-catalog-search
+app.post('/api/music-catalog-search', async (req: Request, res: Response): Promise<void> => {
+  const { title } = req.body;
+  if (!title) {
+    res.status(400).json({ error: 'Titolo brano mancante per la ricerca nel catalogo' });
+    return;
+  }
+
+  try {
+    const candidates = await queryMusicCatalog(title);
+    const hypothesis = candidates[0] || null;
+    let isAmbiguous = false;
+    let ambiguityReason: 'none' | 'multiple_matches' | 'low_confidence' = 'none';
+
+    if (candidates.length >= 2) {
+      const first = candidates[0];
+      const second = candidates[1];
+      if (first.artist.toLowerCase() !== second.artist.toLowerCase()) {
+        const scoreDiff = first.score - second.score;
+        if (scoreDiff < 45 || first.score < 150) {
+          isAmbiguous = true;
+          ambiguityReason = 'multiple_matches';
+        }
+      }
+    } else if (candidates.length === 1 && candidates[0].score < 90) {
+      isAmbiguous = true;
+      ambiguityReason = 'low_confidence';
+    }
+
+    res.json({
+      success: true,
+      query: title,
+      count: candidates.length,
+      hypothesis,
+      isAmbiguous,
+      ambiguityReason,
+      candidates,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('API /api/music-catalog-search error:', msg);
+    res.status(500).json({ success: false, error: msg, candidates: [], hypothesis: null, isAmbiguous: false });
+  }
 });
 
 // CLOUD SQL ARTIST DIRECTORY API ENDPOINTS

@@ -13,6 +13,7 @@ import {
   Check,
   FileDown,
   Loader2,
+  Music,
 } from 'lucide-react';
 
 interface WindowsCommandBarProps {
@@ -35,6 +36,8 @@ interface WindowsCommandBarProps {
   onChangeDownloadMode?: (mode: 'auto' | 'direct' | 'zip') => void;
   onSmartDownload?: () => void;
   isDownloading?: boolean;
+  missingArtistCount?: number;
+  onSearchMissingArtistsInCatalog?: () => void;
 }
 
 export const WindowsCommandBar: React.FC<WindowsCommandBarProps> = ({
@@ -57,6 +60,8 @@ export const WindowsCommandBar: React.FC<WindowsCommandBarProps> = ({
   onChangeDownloadMode,
   onSmartDownload,
   isDownloading = false,
+  missingArtistCount = 0,
+  onSearchMissingArtistsInCatalog,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -170,6 +175,23 @@ export const WindowsCommandBar: React.FC<WindowsCommandBarProps> = ({
               : 'Inverti Titolo/Artista'}
           </span>
         </button>
+
+        {/* Scan Official Catalog for Missing Artists Button */}
+        {missingArtistCount > 0 && onSearchMissingArtistsInCatalog && (
+          <button
+            onClick={onSearchMissingArtistsInCatalog}
+            disabled={isProcessingAi}
+            className={`px-3 py-1.5 rounded flex items-center gap-1.5 font-medium border transition-colors shadow-2xs ${
+              isDarkMode
+                ? 'bg-red-950/30 hover:bg-red-950/50 border-red-500/50 text-red-300'
+                : 'bg-red-50 hover:bg-red-100 border-red-300 text-red-700'
+            }`}
+            title={`Cerca artisti per ${missingArtistCount} brani mancanti nel catalogo ufficiale (iTunes & MusicBrainz)`}
+          >
+            <Music className="w-3.5 h-3.5 text-red-500" />
+            <span>Trova Artisti ({missingArtistCount})</span>
+          </button>
+        )}
 
         {/* Batch AI Refinement Button */}
         <button
